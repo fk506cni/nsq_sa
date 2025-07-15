@@ -1,0 +1,327 @@
+---
+title: "S623_nsp_res"
+author: "fk506cni"
+date: "2025-02-25"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+require(tidyverse)
+require(openxlsx)
+require(DT)
+require(tictoc)
+require(data.table)
+require(officer)
+require(lubridate)
+require(ggpubr)
+require(RSQLite)
+require(extrafont)
+
+loadfonts(quiet = T)
+```
+
+
+```{r}
+outputdir <- "./figs/"
+if(!dir.exists(outputdir)){
+  dir.create(outputdir)
+}
+
+ggsave2_tri <- function(plot, wid = 9, hei=9){
+  plot_name <- deparse(substitute(plot))
+  
+  #png
+  file_name <- paste(outputdir,plot_name, ".png", sep = "",collapse = "")
+  ggsave(filename = file_name,plot = plot,device = "png",width = wid, height = hei,dpi = 300,units = "cm")
+  f2metajson(file_name)
+  
+  # #pdf
+  # file_name <- paste(outputdir,plot_name, ".pdf", sep = "",collapse = "")
+  # ggsave(filename = file_name,plot = plot,device = "pdf",width = wid, height = hei,dpi = 300,units = "cm")
+  # f2metajson(file_name)
+  
+  #pptx
+  file_name <- paste(outputdir,plot_name, ".pptx", sep = "",collapse = "")
+  plot_ed <- rvg::dml(ggobj = plot,width = wid, height = hei)
+  
+  doc <- read_pptx() %>%
+    add_slide('Title and Content', 'Office Theme') %>%
+    ph_with(value = "", location = ph_location_type(type = "title")) %>%
+    ph_with(value = plot_ed, location = ph_location(type = "body",width = cm2inch(wid), height = cm2inch(hei),left = 2, top = 2))
+  doc %>%
+    print(target = file_name)
+  # f2metajson(file_name)
+  
+}
+
+
+
+inch2cm <- function(x){
+  return(x/0.39370)
+}
+cm2inch <- function(x){
+  return(0.39370*x)
+}
+
+p2cm <- function(x){
+  return(as.integer(0.008466666666666667 * x))
+}
+
+cm2p <- function(x){
+  return(as.integer(118.11023622047244 *x))
+}
+
+sv2ggkm <- function(svfit){
+  p <- ggsurvplot(fit = svfit, data = df,
+                risk.table.title = "risk.table.title", risk.table.y.text.col = TRUE,
+           risk.table.y.text = FALSE, fontsize = 5,
+           risk.table = TRUE, tables.theme = theme_pubr(), ggtheme = theme_pubr())
+  p_km <- p$plot
+  p_tb <- p$table
+  p2 <- cowplot::plot_grid(p_km, p_tb, ncol = 1,align = "v", rel_heights = c(3,1))
+  grid::grid.draw(p2)
+  return(p2)
+}
+
+
+f2metajson <- function(f){
+  l <- file.info(f) %>% as.list()
+  l2 <- list()
+  
+  l2 <- list()
+  l_names <- names(l)
+  
+  for (i in 1:length(l)){
+    if(l_names[i] %in% c("uid", "gid", "mode", "uname", "grname")){
+      # print(l_names[i])
+    }else{
+      if("POSIXct" %in% class(l[[i]])){
+        l2[[l_names[i]]] <- l[[i]] %>% 
+          lubridate::ymd_hms() %>% 
+          as.character()
+      }else{
+        l2[[l_names[i]]] <- as.character(l[[i]])
+      }
+    }
+  }
+  
+  l2$f <- f
+  l2$md5 <- f %>% 
+    file(.,open = "rb") %>% 
+    openssl::md5() %>% 
+    as.character() %>% 
+    as.character()
+  l2$sha256 <- f %>% 
+    file(.,open = "rb") %>% 
+    openssl::sha256() %>% 
+    as.character() %>% 
+    as.character()
+  print(l2)
+  f_json <- paste(f, ".json", sep="", collapse = "")
+  jsonlite::write_json(x = l2, path = f_json, pretty=T, auto_unbox=T)
+  # return(l2)
+  # # jsonlite::write_json(x = l2, path = f_json)
+}
+
+
+get_ts <- function(){
+  ts <- Sys.time() %>% 
+    as.character() %>% 
+    str_replace_all(" ", "_") %>% 
+    str_replace_all("\\-|:", "")
+  return(ts)
+}
+
+
+```
+
+
+
+```{r}
+ts <- get_ts()
+ts
+```
+
+
+
+```{r}
+
+con <- dbConnect(SQLite(), "./dat/optuna_study_itr_whole_fix_lchs.db", synchronous="off")
+
+
+
+```
+
+tables
+```{r}
+con %>% 
+  dbListTables() %>% 
+  as.data.frame()
+```
+
+```{r}
+std <- con %>% 
+  dbReadTable("studies")
+
+tag <- "nsp-study_deg"
+std_id <- std %>% 
+  filter(study_name == tag) %>% 
+  .[["study_id"]]
+std_id
+```
+
+
+```{r}
+trls <- con %>% 
+  dbReadTable("trials") %>% 
+  filter(study_id == std_id)
+
+trl_id <- trls %>% 
+  .[["trial_id"]]
+
+
+vls <- con %>% 
+  dbReadTable("trial_params") %>% 
+  filter(trial_id %in% trl_id)
+
+
+res <- con %>% 
+  dbReadTable("trial_values") %>% 
+  filter(trial_id %in% trl_id) %>% 
+    mutate(trial_id = trial_id - min(trial_id))
+
+res_mins <- res %>% 
+  arrange(trial_id) %>%
+  mutate(mval = cummin(value)) %>% 
+  mutate(lmval = lag(mval),
+         ldval =  lead(mval)) 
+  # %>% 
+#   filter((lmval != mval))
+
+```
+
+```{r}
+p_res <- ggplot()+
+  theme_pubr(base_family = "Times New Roman")+
+  geom_hline(yintercept = 1, color="gray")+
+  geom_point(data = res,
+             aes(x=trial_id,
+                 y=value+1), size=0.3)+
+  geom_line(data = res_mins,
+            aes(x = trial_id,
+                y= mval+1),
+            color="red")+
+  coord_cartesian(expand = F, ylim = c(0.9, 600))+
+  scale_y_log10()+
+  xlab("Trial Number")+ylab("Error Number+1")
+p_res
+```
+
+```{r}
+ggsave2_tri(p_res, wid = 15, hei = 12)
+```
+
+
+```{r}
+trls_ts <- trls %>% 
+  filter(trial_id %in% res_mins$trial_id) %>% 
+  filter(!is.na(datetime_complete)) %>%
+  mutate(datetime_complete = lubridate::ymd_hms(datetime_complete),
+         datetime_start = lubridate::ymd_hms(datetime_start)) %>% 
+  mutate(dur = datetime_complete - datetime_start)
+
+
+timeuse <- trls_ts$dur %>% 
+  sum()
+timeuse %>% as.numeric(unit="days") /3
+```
+
+
+```{r}
+tid_0 <- res %>% 
+  filter(value ==0)
+
+vls0 <- vls %>% 
+  filter(trial_id %in% tid_0$trial_id) %>% 
+  mutate(trial_id = as.character(trial_id)) %>% 
+  mutate(param = case_when(
+    param_name=="1by1"~ "1SD",
+    param_name=="cwork"~ "CWL",
+    param_name=="cnight"~ "CNSL",
+    param_name=="fseq"~ "FSP",
+    param_name=="nseq"~ "RSP",
+    param_name=="rqn"~ "RSL",
+    param_name=="rqh"~ "TWHL",
+    param_name=="tt"~ "TSCL",
+    param_name=="tn"~ "TNSHL",
+    param_name=="mps"~ "IPS",
+    param_name=="dab"~ "VRDS",
+    param_name=="nnv"~ "NLNS",
+    param_name=="sc"~ "SSCT",
+    param_name=="lcnt"~ "CPM:CWL",
+    param_name=="lcnn"~ "CPM:CNSL",
+    param_name=="lfbd"~ "CPM:FSP",
+    param_name=="lnd"~ "CPM:RSP",
+    param_name=="sweeps"~ "sweeps/10^5",
+    T ~ ""
+  ) %>% 
+    factor(., levels = c("1SD",
+                        "CWL",
+                        "CNSL",
+                        "FSP",
+                        "RSP",
+                        "RSL",
+                        "TWHL",
+                        "TSCL",
+                        "TNSHL",
+                        "IPS",
+                        "VRDS",
+                        "NLNS",
+                        "SSCT",
+                        "CPM:CWL",
+                        "CPM:CNSL",
+                        "CPM:FSP",
+                        "CPM:RSP",
+                        "sweeps/10^5") %>% 
+             rev())) %>% 
+  mutate(values = if_else(param_name =="sweeps", param_value/10, param_value))
+
+vls0 %>% write.csv("x.csv")
+
+```
+
+```{r}
+p_p0 <- ggplot()+
+  theme_pubr(base_family = "Times New Roman", legend = "none")+
+  geom_point(data = vls0,
+             aes(x=param,
+                 y=values), size=0.3)+
+  geom_line(data = vls0,
+             aes(x=param,
+                 y=values,
+                 color=trial_id,group=trial_id))+
+  coord_flip(expand = F, ylim = c(-1, 270), xlim=c(0.5,18.5))+
+  xlab("Optimized Parameters")+ylab("Weights")
+
+p_p0
+
+ggsave2_tri(p_p0, wid = 12, hei = 18)
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+```{r}
+pkg_list <- as.data.frame(installed.packages())
+# パッケージ名とバージョンのみを抽出
+package_versions <- pkg_list[, c("Package", "Version")]
+print(package_versions)
+write.csv(package_versions, "installed_packages.csv", row.names = FALSE)
+```
+
