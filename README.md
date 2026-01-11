@@ -21,6 +21,17 @@ several classes to achive NSP using SA.
 ## notes
 several process notebook and Rmd file for visualization
 
+1. Hyperparameter search using Optuna.
+    notes\n04_006_seq_fix_demo1_oputuna_org_whole_nlm.ipynb
+1. Median params with error zero.
+    nsq_sa\notes\e0param.json
+1. Search for good shift table using median parameters with error zero.
+    nsq_sa\notes\n06_01_opt_in_fix_param_slim.ipynb
+1. Search for good shift table using median parameters with error zero with sample dataset.
+    nsq_sa\notes\n07_sample_check_n04_006.ipynb
+1. Sample dataset.
+    nsq_sa\demos\dmk0.4_20220111_20_add202011_v2_slim.xlsx
+
 ## requirement
 ### major packages
 1. dwave-neal 0.6.0
